@@ -14,6 +14,32 @@ const stageDate = (unit: Unit, stage: PipelineStage) => ({
   lease_signed: unit.lease_signed_at
 }[stage]);
 const money = (value: number) => new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 }).format(value);
+const csvValue = (value: string | number) => `"${String(value).replace(/"/g, "\"\"")}"`;
+const downloadCsv = (units: Unit[]) => {
+  const rows = [
+    ["Unit", "Property", "Address", "City", "Current stage", "Days in stage", "Monthly rent", "Owner"],
+    ...units.map((unit) => {
+      const current = STAGES.slice().reverse().find((stage) => stageDate(unit, stage.key) && !unit.lease_signed_at) ?? STAGES[0];
+      return [
+        unit.unit_number,
+        unit.property_name,
+        unit.address,
+        unit.city,
+        current.label,
+        daysSince(stageDate(unit, current.key)) ?? 0,
+        unit.monthly_rent,
+        ["J. Lee", "A. Chen", "R. Miller", "T. Singh"][Number(unit.id.replace(/\D/g, "")) % 4]
+      ];
+    })
+  ];
+  const blob = new Blob([rows.map((row) => row.map(csvValue).join(",")).join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "ko-realty-units.csv";
+  link.click();
+  URL.revokeObjectURL(url);
+};
 type Page = "pipeline" | "units" | "tasks" | "performance" | "settings";
 
 export default function Dashboard() {
@@ -67,12 +93,12 @@ export default function Dashboard() {
         const status = average > 30 ? "red" : average > 21 ? "yellow" : "green";
         return <div className="stage" key={stage.key}><div className="stage-top"><span className="stage-icon" style={{ backgroundColor: `${stage.color}18`, color: stage.color }}>○</span><span className={`stage-status ${status}`}/></div><strong>{active.length}</strong><span className="stage-name">{stage.label}</span><div className="stage-days"><b>{average}d</b> avg · <b>{longest}d</b> longest</div></div>;
       })}</div></section>
-      <section className="table-section" id="units"><div className="section-heading"><div><h2>{filter === "All units" ? "Units in motion" : filter}</h2><p>Recent activity and blockers requiring action</p></div><button className="export">Export CSV ↗</button></div><div className="table-wrap"><table><thead><tr><th>Unit</th><th>City</th><th>Current stage</th><th>Days in stage</th><th>Monthly rent</th><th>Owner</th><th></th></tr></thead><tbody>{filtered.slice(0, 12).map((unit) => {
+      <section className="table-section" id="units"><div className="section-heading"><div><h2>{filter === "All units" ? "Units in motion" : filter}</h2><p>Recent activity and blockers requiring action</p></div><button className="export" onClick={() => downloadCsv(filtered)}>Export CSV ↗</button></div><div className="table-wrap"><table><thead><tr><th>Unit</th><th>City</th><th>Current stage</th><th>Days in stage</th><th>Monthly rent</th><th>Owner</th><th></th></tr></thead><tbody>{filtered.slice(0, page === "units" ? filtered.length : 12).map((unit) => {
         const current = STAGES.slice().reverse().find((stage) => stageDate(unit, stage.key) && !unit.lease_signed_at) ?? STAGES[0];
         const days = daysSince(stageDate(unit, current.key)) ?? 0;
         const isStuck = days > 30 || (current.key === "move_out" && days > 3);
         return <tr key={unit.id}><td><div className="unit-name"><span className="unit-symbol">{unit.bedrooms === 0 ? "S" : unit.bedrooms + "B"}</span><div><strong>{unit.property_name}</strong><small>{unit.unit_number} · {unit.address}</small></div></div></td><td>{unit.city}</td><td><span className="stage-pill" style={{ color: current.color, backgroundColor: `${current.color}15` }}><i/> {current.label}</span></td><td><span className={isStuck ? "days stuck" : "days"}>{days} days {isStuck && "!"}</span></td><td>{money(unit.monthly_rent)}</td><td><div className="owner"><span>{["JL", "AC", "RM", "TS"][Number(unit.id.replace(/\D/g, "")) % 4]}</span>{["J. Lee", "A. Chen", "R. Miller", "T. Singh"][Number(unit.id.replace(/\D/g, "")) % 4]}</div></td><td><button className="row-menu">•••</button></td></tr>;
-      })}</tbody></table></div><div className="table-footer">Showing {Math.min(filtered.length, 12)} of {filtered.length} units <button>View all units →</button></div></section>
+      })}</tbody></table></div><div className="table-footer">Showing {Math.min(filtered.length, page === "units" ? filtered.length : 12)} of {filtered.length} units {page === "pipeline" && <button onClick={() => setPage("units")}>View all units →</button>}</div></section>
       </>}
     </section>
   </main>;

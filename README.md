@@ -1,6 +1,21 @@
 # KO Realty vacancy pipeline
 
-Turnover operations dashboard for 800 synthetic Calgary and Edmonton units.
+Turnover operations dashboard for 800 synthetic Calgary and Edmonton units. The app is a Next.js application with a Supabase data source and a deterministic demo-data fallback.
+
+## Features
+
+- Vacancy pipeline from notice through lease signed
+- Unit search, city filtering, and vacancy/stuck filters
+- Turnover task view
+- Performance view
+- Workspace settings view
+- Supabase-backed unit data with demo mode when Supabase variables are absent
+
+## Requirements
+
+- Node.js 20 or newer
+- npm
+- A Supabase project for live data (optional for demo mode)
 
 ## Run locally
 
@@ -9,15 +24,21 @@ npm install
 npm run dev
 ```
 
-The dashboard starts in demo mode with deterministic seed data. Copy `.env.example` to `.env.local` and add Supabase values to use live data.
+Open <http://localhost:3000>.
 
-## Supabase
+The dashboard starts in demo mode with deterministic seed data. To use Supabase, copy `.env.example` to `.env.local`, replace the placeholder values, and restart the development server:
 
-1. Run `supabase/migrations/001_vacancy_pipeline.sql` in the Supabase SQL editor.
-2. Run `npm run seed` with `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` set.
+```powershell
+Copy-Item .env.example .env.local
+```
 
-The six stage timestamps are `notice_at`, `move_out_at`, `listed_at`, `first_showing_at`, `application_at`, and `lease_signed_at`. The seed uses a deterministic pattern so previews and local data are stable.
+Do not commit `.env.local`. The repository ignores local environment files.
 
-## n8n
+## Validate before publishing
 
-Import `n8n/vacancy-turnover.json`. Configure `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `LISTING_DRAFT_WEBHOOK_URL`, and `SLACK_WEBHOOK_URL` as n8n environment variables. The notice webhook creates a turnover checklist and sends listing details to the drafting endpoint. A daily schedule finds units with no lease after 30 days (or not listed three days after move-out) and alerts operations.
+```bash
+npx tsc --noEmit
+npm run build
+```
+
+`npm run build` is the most useful deployment check because it validates the production Next.js build.

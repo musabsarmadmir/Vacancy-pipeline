@@ -1,0 +1,237 @@
+{
+  "name": "KO Realty - Daily stuck-unit digest",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "faaf6024-04f1-49c9-bd24-fb0b20c02d71",
+      "name": "Weekdays 8am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "2855af60-9260-4895-9778-150003bd0bbc",
+              "name": "supabaseUrl",
+              "value": "https://YOUR-PROJECT.supabase.co",
+              "type": "string"
+            },
+            {
+              "id": "c4aa7fa0-e54d-42cb-be1a-44bc6b3c7eaa",
+              "name": "supabaseKey",
+              "value": "PASTE_SUPABASE_SERVICE_ROLE_KEY",
+              "type": "string"
+            },
+            {
+              "id": "5495ceb4-cfc7-45ac-8504-0b4e7f69a1fd",
+              "name": "telegramToken",
+              "value": "PASTE_TELEGRAM_BOT_TOKEN",
+              "type": "string"
+            },
+            {
+              "id": "6ce16c48-bbee-41e7-a03b-596a2491b54a",
+              "name": "telegramChatId",
+              "value": "PASTE_TELEGRAM_CHAT_ID",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c895f21e-43be-4ad3-be2e-9f6c101d4c7d",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.supabaseUrl }}/rest/v1/units?stage=eq.Notice&move_out_date=lte.{{ $now.toFormat('yyyy-MM-dd') }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $('Config').first().json.supabaseKey }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Config').first().json.supabaseKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ stage: 'Move-out', stage_entered_at: new Date().toISOString() }) }}"
+      },
+      "id": "e886ba41-0191-47f4-820c-bce8e10915fe",
+      "name": "Advance to Move-out",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').first().json.supabaseUrl }}/rest/v1/units?select=id,building,unit_label,city,stage,stage_entered_at,rent,owner&stage=neq.Notice&limit=2000",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $('Config').first().json.supabaseKey }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Config').first().json.supabaseKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "id": "75a20da9-bb54-41b2-954d-8a3fecd79d44",
+      "name": "Fetch active units",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Finds units past SLA. Notice is excluded: the unit is still occupied, so it is not vacancy.\n// Keep SLA in sync with the dashboard.\nconst SLA = { 'Move-out': 30, 'Listed': 30, 'Showing': 30, 'Application': 30, 'Lease signed': 30 }; // days per stage\nconst now = Date.now();\n\nconst rows = $input.all().map(i => i.json).filter(r => r && r.stage && r.stage_entered_at);\n\nconst stuck = rows\n  .map(r => {\n    const days = Math.floor((now - new Date(r.stage_entered_at).getTime()) / 86400000);\n    const sla = SLA[r.stage];\n    return { ...r, days, sla, over: sla === undefined ? 0 : days - sla };\n  })\n  .filter(r => r.over > 0);\n\nif (stuck.length === 0) return []; // nothing to report, workflow stops here\n\nconst money = v => '$' + Math.round(Number(v) || 0).toLocaleString('en-CA');\nconst rentAtRisk = stuck.reduce((s, r) => s + (Number(r.rent) || 0), 0);\n\nconst byCity = {};\nfor (const r of stuck) (byCity[r.city || 'Unknown'] ||= []).push(r);\n\nconst date = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Edmonton' });\nlet text = `Stuck units digest, ${date}\\n${stuck.length} units past SLA, ${money(rentAtRisk)}/month rent at risk\\n`;\n\nfor (const city of Object.keys(byCity).sort()) {\n  const list = byCity[city].sort((a, b) => b.over - a.over);\n  text += `\\n${city} (${list.length})\\n`;\n  for (const r of list.slice(0, 10)) {\n    text += `- ${r.building} ${r.unit_label}: ${r.stage}, ${r.days}d (SLA ${r.sla}d), ${money(r.rent)}, ${r.owner || 'no owner'}\\n`;\n  }\n  if (list.length > 10) text += `...and ${list.length - 10} more\\n`;\n}\nif (text.length > 3900) text = text.slice(0, 3900) + '\\n...truncated';\n\nreturn [{ json: { text, count: stuck.length } }];\n"
+      },
+      "id": "52f60781-224f-42f3-8229-a59f3ddc9275",
+      "name": "Find stuck units",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $('Config').first().json.telegramToken }}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $('Config').first().json.telegramChatId, text: $json.text }) }}"
+      },
+      "id": "039171cd-c8d2-47b4-a551-7924b8de48ef",
+      "name": "Send digest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Weekdays 8am": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Advance to Move-out",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Advance to Move-out": {
+      "main": [
+        [
+          {
+            "node": "Fetch active units",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch active units": {
+      "main": [
+        [
+          {
+            "node": "Find stuck units",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find stuck units": {
+      "main": [
+        [
+          {
+            "node": "Send digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Edmonton"
+  }
+}

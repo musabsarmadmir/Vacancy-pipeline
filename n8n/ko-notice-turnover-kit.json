@@ -1,0 +1,446 @@
+{
+  "name": "KO Realty - Notice to turnover kit",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ko-notice",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "4f5bcd47-1ace-4cd1-bd8d-73dfb6ea2db5",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "0a0bcb83-3560-4aa7-a896-5dad9fe0f1db"
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "97f4a09e-6049-42d6-aec1-2582765dc3c1",
+              "name": "supabaseUrl",
+              "value": "https://YOUR-PROJECT.supabase.co",
+              "type": "string"
+            },
+            {
+              "id": "476c0ee7-9213-481f-9e27-98bc29555bfa",
+              "name": "supabaseKey",
+              "value": "PASTE_SUPABASE_SERVICE_ROLE_KEY",
+              "type": "string"
+            },
+            {
+              "id": "57e35ead-34d3-42a4-86e4-35cdf6cfff8f",
+              "name": "groqKey",
+              "value": "PASTE_GROQ_API_KEY",
+              "type": "string"
+            },
+            {
+              "id": "665ff5a5-ca7c-4864-aef2-9a0e7c2afec6",
+              "name": "groqModel",
+              "value": "llama-3.3-70b-versatile",
+              "type": "string"
+            },
+            {
+              "id": "e647e922-c497-4b73-a679-22c398272d70",
+              "name": "telegramToken",
+              "value": "PASTE_TELEGRAM_BOT_TOKEN",
+              "type": "string"
+            },
+            {
+              "id": "d2a2787e-2424-4725-9fb6-87591d3f217e",
+              "name": "telegramChatId",
+              "value": "PASTE_TELEGRAM_CHAT_ID",
+              "type": "string"
+            },
+            {
+              "id": "0d8dc65a-e001-4426-a051-5d2ebc7a62b9",
+              "name": "webhookSecret",
+              "value": "CHANGE_ME_LONG_RANDOM_STRING",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "05de1fd0-5536-49de-a0fc-47c2796a08a8",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "898bcd01-2928-42f0-aa4b-795b07d64eee",
+              "leftValue": "={{ $('Webhook').first().json.headers['x-ko-secret'] }}",
+              "rightValue": "={{ $('Config').first().json.webhookSecret }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9210db34-5be5-4bb4-b3ce-3017060f30da",
+      "name": "Check secret",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: 'unauthorized' }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "8a1ca6be-5358-4cd4-bc69-45dee389fe93",
+      "name": "Unauthorized",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Turns a notice into a dated turnover checklist.\nconst n = $('Webhook').first().json.body || {};\nfor (const k of ['unit_id', 'move_out_date']) {\n  if (!n[k]) throw new Error(`Missing field: ${k}`);\n}\nconst moveOut = new Date(n.move_out_date + 'T00:00:00Z');\nif (isNaN(moveOut)) throw new Error('move_out_date must be YYYY-MM-DD');\n\nconst today = new Date();\ntoday.setUTCHours(0, 0, 0, 0);\nconst iso = d => d.toISOString().slice(0, 10);\nconst addDays = (d, k) => { const x = new Date(d); x.setUTCDate(x.getUTCDate() + k); return x; };\n\n// offset = days relative to the move-out date. Edit to match KO Realty's real process.\nconst template = [\n  { offset: -14, role: 'Leasing',     title: 'Publish \"available from\" listing using existing photos' },\n  { offset: -7,  role: 'Maintenance', title: 'Pre-move-out inspection, list repairs needed' },\n  { offset: -5,  role: 'Maintenance', title: 'Book cleaners, painters and trades' },\n  { offset: 0,   role: 'Operations',  title: 'Collect keys, move-out inspection, photo walk-through' },\n  { offset: 1,   role: 'Maintenance', title: 'Start repairs and paint' },\n  { offset: 3,   role: 'Cleaning',    title: 'Deep clean' },\n  { offset: 4,   role: 'Leasing',     title: 'Professional photos, refresh listing' },\n  { offset: 5,   role: 'Leasing',     title: 'Unit move-in ready, open showings' },\n];\n\nconst tasks = template.map(t => {\n  let due = addDays(moveOut, t.offset);\n  if (due < today) due = today; // short notice: nothing can be due in the past\n  return { unit_id: n.unit_id, title: t.title, role: t.role, due_date: iso(due), status: 'open' };\n});\n\nreturn [{ json: { unit: n, tasks } }];\n"
+      },
+      "id": "83481c9b-cbbd-4fca-b6c3-48eed156c4c1",
+      "name": "Build checklist",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.supabaseUrl }}/rest/v1/turnover_tasks",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $('Config').first().json.supabaseKey }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Config').first().json.supabaseKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Build checklist').first().json.tasks) }}"
+      },
+      "id": "c56bbd74-d53a-436c-9680-e5955a4b15e2",
+      "name": "Save tasks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.supabaseUrl }}/rest/v1/units?id=eq.{{ encodeURIComponent($('Build checklist').first().json.unit.unit_id) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $('Config').first().json.supabaseKey }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Config').first().json.supabaseKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ stage: 'Notice', stage_entered_at: new Date().toISOString(), move_out_date: $('Build checklist').first().json.unit.move_out_date }) }}"
+      },
+      "id": "f3ff5ec7-0166-4c14-bbb4-4023d6de0dbd",
+      "name": "Move unit to Notice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Config').first().json.groqKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $('Config').first().json.groqModel, temperature: 0.4, messages: [{ role: 'system', content: 'You write short, accurate rental listings for a Canadian property manager. Use ONLY the facts provided. Do not invent amenities, sizes or features. 80 to 120 words, plain text, no emojis.' }, { role: 'user', content: 'Write a listing from these facts: ' + JSON.stringify($('Build checklist').first().json.unit) }] }) }}"
+      },
+      "id": "1417e8a8-7c34-4b06-b207-b58f59832546",
+      "name": "Draft listing (Groq)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Config').first().json.supabaseUrl }}/rest/v1/units?id=eq.{{ encodeURIComponent($('Build checklist').first().json.unit.unit_id) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $('Config').first().json.supabaseKey }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Config').first().json.supabaseKey }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ listing_draft: ($json.choices && $json.choices[0]) ? $json.choices[0].message.content : null }) }}"
+      },
+      "id": "71c4bf10-84aa-4419-b32d-e99b7e8c1481",
+      "name": "Save listing draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $('Config').first().json.telegramToken }}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const b = $('Build checklist').first().json; const u = b.unit; return JSON.stringify({ chat_id: $('Config').first().json.telegramChatId, text: 'Notice logged: ' + u.building + ' ' + u.unit_label + ' (' + (u.city || '') + '), move-out ' + u.move_out_date + '. ' + b.tasks.length + ' turnover tasks created, listing draft saved.' }); })() }}"
+      },
+      "id": "8fdad2d9-fd54-4159-9dbb-db4e01a7745e",
+      "name": "Notify ops",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, tasks_created: $('Build checklist').first().json.tasks.length }) }}",
+        "options": {}
+      },
+      "id": "fd6e6be3-310b-4ecd-b4de-75faa9a8b784",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Check secret",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check secret": {
+      "main": [
+        [
+          {
+            "node": "Build checklist",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unauthorized",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build checklist": {
+      "main": [
+        [
+          {
+            "node": "Save tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save tasks": {
+      "main": [
+        [
+          {
+            "node": "Move unit to Notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Move unit to Notice": {
+      "main": [
+        [
+          {
+            "node": "Draft listing (Groq)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft listing (Groq)": {
+      "main": [
+        [
+          {
+            "node": "Save listing draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save listing draft": {
+      "main": [
+        [
+          {
+            "node": "Notify ops",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify ops": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Edmonton"
+  }
+}

@@ -73,13 +73,13 @@ export default function Dashboard() {
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark">K</div><div><strong>KO REALTY</strong><span>OPERATIONS</span></div></div>
       <div className="workspace-label">WORKSPACE</div>
-      <nav><NavItem page="pipeline" current={page} onClick={setPage} icon="◈" label="Vacancy pipeline"/><NavItem page="units" current={page} onClick={setPage} icon="▦" label="All units"/><NavItem page="tasks" current={page} onClick={setPage} icon="✓" label="Turnover tasks" badge="12"/></nav>
+      <nav><NavItem page="pipeline" current={page} onClick={setPage} icon="◈" label="Vacancy pipeline"/><NavItem page="units" current={page} onClick={setPage} icon="▦" label="All units"/><NavItem page="tasks" current={page} onClick={setPage} icon="✓" label="Turnover tasks"/></nav>
       <div className="workspace-label">REPORTING</div>
       <nav><NavItem page="performance" current={page} onClick={setPage} icon="↗" label="Performance"/><NavItem page="settings" current={page} onClick={setPage} icon="⚙" label="Settings"/></nav>
       <div className="sidebar-bottom"><div className="sync-dot"/><div><strong>Data synced</strong><small>{loading ? "Connecting..." : "Just now · Supabase"}</small></div><button aria-label="More options">•••</button></div>
     </aside>
     <section className="content">
-      <header className="topbar"><div><div className="eyebrow">OPERATIONS / TURNOVER</div><h1>{pageTitle(page)}</h1><p>{pageDescription(page)}</p></div><div className="header-actions"><button className="icon-button" aria-label="Help">?</button><div className="avatar">MS</div></div></header>
+      <header className="topbar"><div><div className="eyebrow">OPERATIONS / TURNOVER</div><h1>{pageTitle(page)}</h1><p>{pageDescription(page)}</p></div><div className="header-actions"><div className="avatar">MS</div></div></header>
       {page === "tasks" && <TasksPage units={units} onOpenPipeline={() => setPage("pipeline")}/>}
       {page === "performance" && <PerformancePage units={units}/>}
       {page === "settings" && <SettingsPage/>}
@@ -112,8 +112,8 @@ function pageDescription(page: Page) {
   return { pipeline: "Track every home from notice to new lease.", units: "Browse and filter every home in your portfolio.", tasks: "Keep every turnover moving with clear next steps.", performance: "Understand vacancy trends and portfolio health.", settings: "Manage workspace preferences and integrations." }[page];
 }
 
-function NavItem({ page, current, onClick, icon, label, badge }: { page: Page; current: Page; onClick: (page: Page) => void; icon: string; label: string; badge?: string }) {
-  return <a href={`#${page}`} className={current === page ? "active" : ""} onClick={(event) => { event.preventDefault(); onClick(page); }}><span>{icon}</span>{label}{badge && <b>{badge}</b>}</a>;
+function NavItem({ page, current, onClick, icon, label }: { page: Page; current: Page; onClick: (page: Page) => void; icon: string; label: string }) {
+  return <a href={`#${page}`} className={current === page ? "active" : ""} onClick={(event) => { event.preventDefault(); onClick(page); }}><span>{icon}</span>{label}</a>;
 }
 
 function TasksPage({ units, onOpenPipeline }: { units: Unit[]; onOpenPipeline: () => void }) {

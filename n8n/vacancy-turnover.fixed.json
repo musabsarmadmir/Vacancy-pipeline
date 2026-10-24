@@ -1,0 +1,283 @@
+{
+  "name": "KO Realty · Vacancy turnover",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vacancy/notice",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "notice-webhook",
+      "name": "Notice logged",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        280,
+        220
+      ],
+      "webhookId": "c4b55472-461e-4140-8022-926fe03aa4ff"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "26343f9e-43e5-4d51-b6ae-25f2174014e4",
+              "leftValue": "={{ $json.headers['x-ko-secret'] }}",
+              "rightValue": "={{ $env.KO_WEBHOOK_SECRET }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-secret",
+      "name": "Check secret",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        500,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/turnover_tasks",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify([{ unit_id: $('Notice logged').first().json.body.unit_id, task_type: 'notice_checklist', status: 'open', tasks: ['Confirm notice dates','Schedule pre-move inspection','Book turnover vendors','Prepare listing copy','Set showing availability'] }]) }}"
+      },
+      "id": "create-checklist",
+      "name": "Create turnover checklist",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        740,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LISTING_DRAFT_WEBHOOK_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ unit_id: $('Notice logged').first().json.body.unit_id, prompt: 'Draft a concise rental listing using the unit details. Return headline, description, amenities, and showing CTA.' }) }}"
+      },
+      "id": "draft-listing",
+      "name": "Draft listing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        980,
+        220
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "daily-check",
+      "name": "Daily stuck-unit check",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        280,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/units?select=*&lease_signed_at=is.null&move_out_at=lte.{{ encodeURIComponent(new Date().toISOString()) }}&limit=2000",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            }
+          ]
+        }
+      },
+      "id": "find-vacant",
+      "name": "Find vacant units",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Computes stage and days-in-stage from the unit timestamps, then builds ONE digest message.\n// Keep SLA in sync with the dashboard. Add showing_at / application_at here if you track them.\nconst SLA = { 'Move-out': 30, 'Listed': 30 }; // days allowed per stage\nconst now = Date.now();\nconst money = v => '$' + Math.round(Number(v) || 0).toLocaleString('en-CA');\n\nconst rows = $input.all().map(i => i.json).filter(r => r && r.move_out_at);\n\nconst stuck = rows\n  .map(r => {\n    const stage = r.listed_at ? 'Listed' : 'Move-out';\n    const entered = new Date(r.listed_at || r.move_out_at).getTime();\n    const days = Math.floor((now - entered) / 86400000);\n    return { ...r, stage, days, sla: SLA[stage], over: days - SLA[stage] };\n  })\n  .filter(r => r.over > 0)\n  .sort((a, b) => b.over - a.over);\n\nif (stuck.length === 0) return []; // nothing past SLA, stop here\n\nconst rentAtRisk = stuck.reduce((s, r) => s + (Number(r.rent) || 0), 0);\nlet text = `Vacancy SLA alert: ${stuck.length} units past SLA` +\n  (rentAtRisk ? `, ${money(rentAtRisk)}/month rent at risk` : '') + '\\n';\nfor (const r of stuck.slice(0, 15)) {\n  text += `- ${r.property_name} ${r.unit_number}: ${r.stage}, ${r.days}d (SLA ${r.sla}d)\\n`;\n}\nif (stuck.length > 15) text += `...and ${stuck.length - 15} more. Open the vacancy pipeline.\\n`;\n\nreturn [{ json: { text } }];\n"
+      },
+      "id": "find-stuck",
+      "name": "Find units past SLA",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        760,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.text }) }}"
+      },
+      "id": "alert-team",
+      "name": "Alert operations",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "Notice logged": {
+      "main": [
+        [
+          {
+            "node": "Check secret",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check secret": {
+      "main": [
+        [
+          {
+            "node": "Create turnover checklist",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Create turnover checklist": {
+      "main": [
+        [
+          {
+            "node": "Draft listing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily stuck-unit check": {
+      "main": [
+        [
+          {
+            "node": "Find vacant units",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find vacant units": {
+      "main": [
+        [
+          {
+            "node": "Find units past SLA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find units past SLA": {
+      "main": [
+        [
+          {
+            "node": "Alert operations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Edmonton"
+  }
+}
